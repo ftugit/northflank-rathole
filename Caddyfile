@@ -10,10 +10,13 @@
         format console
     }
 
+    # Northflank health check
     handle /healthz {
         respond "ok" 200
     }
 
+    # Control channel домашнего rathole-client.
+    # Он подключается без Cloudflare-заголовка.
     @rathole_ws {
         header Upgrade websocket
     }
@@ -22,11 +25,24 @@
         reverse_proxy 127.0.0.1:2333
     }
 
-    handle {
+    # Обычный HTTP-трафик только с секретом Cloudflare
+    @cloudflare_origin {
+        header X-Origin-Auth "{$CF_ORIGIN_SECRET}"
+    }
+
+    handle @cloudflare_origin {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host {http.request.host}
             header_up X-Forwarded-Proto https
             header_up X-Forwarded-Port 443
+
+            header_up X-Real-IP {http.request.header.CF-Connecting-IP}
+            header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
         }
+    }
+
+    # Прямой HTTP-запрос без Cloudflare-секрета
+    handle {
+        respond "origin access denied" 403
     }
 }
