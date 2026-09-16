@@ -1,0 +1,16 @@
+[server]
+bind_addr = "127.0.0.1:2333"
+default_token = "__RATHOLE_TOKEN__"
+heartbeat_interval = 30
+
+[server.transport]
+type = "websocket"
+
+[server.transport.websocket]
+tls = false
+
+[server.services.web]
+type = "tcp"
+token = "__RATHOLE_TOKEN__"
+bind_addr = "127.0.0.1:18080"
+nodelay = true

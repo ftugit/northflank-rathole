@@ -1,0 +1,23 @@
+:8080 {
+    respond /healthz "ok" 200
+
+    # Исходящее WSS-соединение домашнего rathole-client
+    @rathole_ws {
+        header Upgrade websocket
+    }
+
+    handle @rathole_ws {
+        reverse_proxy 127.0.0.1:2333
+    }
+
+    # Обычные HTTP-запросы передаются через rathole
+    # на домашний Traefik.
+    handle {
+        reverse_proxy 127.0.0.1:18080 {
+            header_up Host {http.request.host}
+            header_up X-Forwarded-Host {http.request.host}
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Port 443
+        }
+    }
+}
