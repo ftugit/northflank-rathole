@@ -7,10 +7,16 @@
 
     log {
         output stdout
-        format console
+
+        # Не показывать секрет в логах Caddy
+        format filter {
+            wrap json
+            request>headers>X-Origin-Auth delete
+            request>headers>Cookie delete
+        }
     }
 
-    # Northflank health check
+    # Health check Northflank
     handle /healthz {
         respond "ok" 200
     }
@@ -25,6 +31,11 @@
         reverse_proxy 127.0.0.1:2333
     }
 
+    # Matcher для Cloudflare Transform Rule
+    @cloudflare_origin {
+        header X-Origin-Auth "{$CF_ORIGIN_SECRET}"
+    }
+
     # Обычный HTTP-трафик только с секретом Cloudflare
     handle @cloudflare_origin {
         reverse_proxy 127.0.0.1:18080 {
@@ -32,26 +43,16 @@
             header_up X-Forwarded-Proto https
             header_up X-Forwarded-Port 443
 
+            # Передать настоящий IP пользователя в домашний backend
             header_up X-Real-IP {http.request.header.CF-Connecting-IP}
             header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
 
-            # Не передавать секрет в домашние приложения
+            # Не передавать секрет в Traefik/PocketBase/whoami
             header_up -X-Origin-Auth
         }
     }
 
-    handle @cloudflare_origin {
-        reverse_proxy 127.0.0.1:18080 {
-            header_up Host {http.request.host}
-            header_up X-Forwarded-Proto https
-            header_up X-Forwarded-Port 443
-
-            header_up X-Real-IP {http.request.header.CF-Connecting-IP}
-            header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
-        }
-    }
-
-    # Прямой HTTP-запрос без Cloudflare-секрета
+    # Прямой HTTP-запрос без секрета
     handle {
         respond "origin access denied" 403
     }
