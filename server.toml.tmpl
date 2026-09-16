@@ -1,16 +1,21 @@
-[server]
-bind_addr = "127.0.0.1:2333"
-default_token = "__RATHOLE_TOKEN__"
-heartbeat_interval = 30
+[client]
+remote_addr = "NF_HOST:443"
+default_token = "323c17cc8a3e8cdecc1f2d3702a46e7fd580973463699298ae7623b29f08e739"
+heartbeat_timeout = 40
+retry_interval = 5
 
-[server.transport]
+[client.transport]
 type = "websocket"
 
-[server.transport.websocket]
-tls = false
+[client.transport.websocket]
+tls = true
 
-[server.services.web]
+[client.transport.tls]
+hostname = "NF_HOST"
+trusted_root = "/etc/ssl/certs/ca-certificates.crt"
+
+[client.services.web]
 type = "tcp"
-token = "__RATHOLE_TOKEN__"
-bind_addr = "127.0.0.1:18080"
+token = "323c17cc8a3e8cdecc1f2d3702a46e7fd580973463699298ae7623b29f08e739"
+local_addr = "127.0.0.1:80"
 nodelay = true
