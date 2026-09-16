@@ -1,4 +1,4 @@
-:8080 {
+0.0.0.0:8080 {
     respond /healthz "ok" 200
 
     # Исходящее WSS-соединение домашнего rathole-client
