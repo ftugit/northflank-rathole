@@ -2,7 +2,9 @@
     auto_https off
 }
 
-http://0.0.0.0:8080 {
+:8080 {
+    bind 0.0.0.0
+
     log {
         output stdout
         format console
@@ -10,7 +12,6 @@ http://0.0.0.0:8080 {
 
     respond /healthz "ok" 200
 
-    # Временный маршрут для проверки домашнего Traefik
     handle_path /__probe* {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host panel.pzlb.ru
@@ -19,7 +20,6 @@ http://0.0.0.0:8080 {
         }
     }
 
-    # WSS-соединение домашнего rathole-client
     @rathole_ws {
         header Upgrade websocket
     }
@@ -28,7 +28,6 @@ http://0.0.0.0:8080 {
         reverse_proxy 127.0.0.1:2333
     }
 
-    # Обычные запросы к домашнему Traefik
     handle {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host {http.request.host}
