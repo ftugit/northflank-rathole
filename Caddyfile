@@ -15,7 +15,16 @@
         respond "ok" 200
     }
 
-    # Временная проверка домашнего Traefik
+    # Временная проверка pbseed
+    handle_path /__probe-pbseed* {
+        reverse_proxy 127.0.0.1:18080 {
+            header_up Host pbseed.pzlb.ru
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Port 443
+        }
+    }
+
+    # Временная проверка панели
     handle_path /__probe* {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host panel.pzlb.ru
@@ -33,7 +42,7 @@
         reverse_proxy 127.0.0.1:2333
     }
 
-    # Обычный трафик через подключённый домашний сервис
+    # Обычный трафик через домашний Traefik
     handle {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host {http.request.host}
