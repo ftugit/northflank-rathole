@@ -8,6 +8,32 @@ http://0.0.0.0:8080 {
         format console
     }
 
-    respond /healthz "caddy-ok" 200
-    respond "relay-up" 200
+    respond /healthz "ok" 200
+
+    # Временный маршрут для проверки домашнего Traefik
+    handle_path /__probe* {
+        reverse_proxy 127.0.0.1:18080 {
+            header_up Host panel.pzlb.ru
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Port 443
+        }
+    }
+
+    # WSS-соединение домашнего rathole-client
+    @rathole_ws {
+        header Upgrade websocket
+    }
+
+    handle @rathole_ws {
+        reverse_proxy 127.0.0.1:2333
+    }
+
+    # Обычные запросы к домашнему Traefik
+    handle {
+        reverse_proxy 127.0.0.1:18080 {
+            header_up Host {http.request.host}
+            header_up X-Forwarded-Proto https
+            header_up X-Forwarded-Port 443
+        }
+    }
 }
