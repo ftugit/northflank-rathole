@@ -10,8 +10,12 @@
         format console
     }
 
-    respond /healthz "ok" 200
+    # Liveness endpoint Northflank
+    handle /healthz {
+        respond "ok" 200
+    }
 
+    # Временная проверка домашнего Traefik
     handle_path /__probe* {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host panel.pzlb.ru
@@ -20,6 +24,7 @@
         }
     }
 
+    # WebSocket-туннель rathole
     @rathole_ws {
         header Upgrade websocket
     }
@@ -28,6 +33,7 @@
         reverse_proxy 127.0.0.1:2333
     }
 
+    # Обычный трафик через подключённый домашний сервис
     handle {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host {http.request.host}
