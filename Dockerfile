@@ -13,7 +13,6 @@ RUN apt-get update \
 COPY --from=rathole /app/rathole /usr/local/bin/rathole
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 
-COPY Caddyfile /etc/caddy/Caddyfile
 COPY entrypoint.sh /entrypoint.sh
 
 RUN chmod 0755 /entrypoint.sh \
