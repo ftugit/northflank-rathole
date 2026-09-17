@@ -8,7 +8,6 @@
     log {
         output stdout
 
-        # Не показывать секрет в логах Caddy
         format filter {
             wrap json
             request>headers>X-Origin-Auth delete
@@ -21,39 +20,24 @@
         respond "ok" 200
     }
 
-    # Control channel домашнего rathole-client.
-    # Он подключается без Cloudflare-заголовка.
-    @rathole_ws {
+    # Только control channel rathole.
+    # Остальные WebSocket-запросы, включая Frigate, идут в домашний Proxy.
+    @rathole_control {
+        host p01--northflank-rathole--xgl97grbggxj.code.run
         header Upgrade websocket
     }
 
-    handle @rathole_ws {
+    handle @rathole_control {
         reverse_proxy 127.0.0.1:2333
     }
 
-    # Matcher для Cloudflare Transform Rule
-    @cloudflare_origin {
-        header X-Origin-Auth "{$CF_ORIGIN_SECRET}"
-    }
-
-    # Обычный HTTP-трафик только с секретом Cloudflare
-    handle @cloudflare_origin {
+    # Временный режим: весь остальной HTTP/WebSocket-трафик
+    # пропускается без X-Origin-Auth
+    handle {
         reverse_proxy 127.0.0.1:18080 {
             header_up Host {http.request.host}
             header_up X-Forwarded-Proto https
             header_up X-Forwarded-Port 443
-
-            # Передать настоящий IP пользователя в домашний backend
-            header_up X-Real-IP {http.request.header.CF-Connecting-IP}
-            header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
-
-            # Не передавать секрет в Traefik/PocketBase/whoami
-            header_up -X-Origin-Auth
         }
-    }
-
-    # Прямой HTTP-запрос без секрета
-    handle {
-        respond "origin access denied" 403
     }
 }
