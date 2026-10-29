@@ -12,11 +12,6 @@ esac
 
 : "${RATHOLE_PUBLIC_HOST:?RATHOLE_PUBLIC_HOST is required}"
 
-if [ -z "${RATHOLE_PUBLIC_HOST}" ]; then
-    echo "RATHOLE_PUBLIC_HOST is required" >&2
-    exit 1
-fi
-
 # Валидация хоста чтобы не сломать Caddyfile (только безопасные символы)
 case "$RATHOLE_PUBLIC_HOST" in
   *[!A-Za-z0-9.-]*)
@@ -25,17 +20,19 @@ case "$RATHOLE_PUBLIC_HOST" in
     ;;
 esac
 
-# --- Секрет Cloudflare (заголовок X-Origin-Auth) ------------------------------
-# Теперь ОПЦИОНАЛЕН: если не задан — защита выключена (открытый доступ).
-# Если задан — валидируем и включаем проверку в Caddyfile.
+# ---------------------------------------------------------------- tunables
+# heartbeat_interval сервера. Инвариант: client.heartbeat_timeout >= 3 * heartbeat_interval.
+# 10 c -> клиент с heartbeat_timeout=90 переживает «залипы» до 90 c, а мёртвый клиент виден за ~10-20 c.
+HEARTBEAT_INTERVAL="${HEARTBEAT_INTERVAL:-10}"
+case "$HEARTBEAT_INTERVAL" in ''|*[!0-9]*) echo "HEARTBEAT_INTERVAL must be an integer" >&2; exit 1;; esac
+
+# --- Секрет для origin-защиты (заголовок X-Origin-Auth) ----------------------
 CF_ENABLED=0
 if [ -n "${CF_ORIGIN_SECRET:-}" ]; then
     if [ "${#CF_ORIGIN_SECRET}" -lt 32 ]; then
         echo "CF_ORIGIN_SECRET must be at least 32 characters" >&2
         exit 1
     fi
-    # Только буквы и цифры: защищает Caddyfile от пробелов, переводов строк, $ и {}
-    # Сгенерировать: openssl rand -hex 32
     case "$CF_ORIGIN_SECRET" in
       *[!A-Za-z0-9]*|'')
         echo "CF_ORIGIN_SECRET must contain only letters and digits (openssl rand -hex 32)" >&2
@@ -44,14 +41,17 @@ if [ -n "${CF_ORIGIN_SECRET:-}" ]; then
     esac
     CF_ENABLED=1
 else
-    echo "CF_ORIGIN_SECRET not set — Cloudflare origin protection DISABLED (open access)" >&2
+    echo "CF_ORIGIN_SECRET not set — origin protection DISABLED (open access)" >&2
 fi
 
+# ---------------------------------------------------------------- rathole
+# ВАЖНО: сервер слушает 0.0.0.0:2333 (снаружи доступен только через Caddy на :8080,
+# но health-check Northflank и отладка из контейнера работают).
 cat > /tmp/server.toml <<EOF
 [server]
-bind_addr = "127.0.0.1:2333"
+bind_addr = "0.0.0.0:2333"
 default_token = "$RATHOLE_TOKEN"
-heartbeat_interval = 30
+heartbeat_interval = $HEARTBEAT_INTERVAL
 
 [server.transport]
 type = "websocket"
@@ -73,14 +73,22 @@ fi
 
 mkdir -p /etc/caddy
 
-# --- Генерация Caddyfile ---------------------------------------------------
-# RATHOLE_PUBLIC_HOST теперь без дефолта — обязателен (проверено выше).
-# CF_ORIGIN_SECRET опционален — генерируем два разных конфига.
-
+# ---------------------------------------------------------------- Caddyfile
+# Ключевые отличия от исходника:
+#   * у @rathole_control добавлен match на rathole-подпуть — data-каналы больше
+#     не попадают под «catch-all» handle с таймаутами обычного HTTP-прокси;
+#   * idle-таймауты увеличены, чтобы длинные WS не срезались краем;
+#   * flush_interval -1 и transport http1 — чтобы WS не буферизовался.
 {
 cat <<EOF
 {
 	auto_https off
+	servers {
+		timeouts {
+			read_body 0
+			idle 0
+		}
+	}
 }
 
 :8080 {
@@ -99,12 +107,18 @@ cat <<EOF
 		respond "ok" 200
 	}
 
+	# 1) control + data каналы rathole (WebSocket upgrade)
 	@rathole_control {
 		host $RATHOLE_PUBLIC_HOST
 		header Upgrade websocket
 	}
 	handle @rathole_control {
-		reverse_proxy 127.0.0.1:2333
+		reverse_proxy 127.0.0.1:2333 {
+			flush_interval -1
+			transport http {
+				versions 1.1
+			}
+		}
 	}
 
 EOF
@@ -114,6 +128,7 @@ cat <<EOF
 	@cloudflare_origin header X-Origin-Auth $CF_ORIGIN_SECRET
 	handle @cloudflare_origin {
 		reverse_proxy 127.0.0.1:18080 {
+			flush_interval -1
 			header_up Host {http.request.host}
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-Port 443
@@ -128,10 +143,9 @@ cat <<EOF
 EOF
 else
 cat <<EOF
-	# Cloudflare protection disabled — берём IP от Northflank Envoy,
-	# т.к. CF-Connecting-IP без Cloudflare не существует
 	handle {
 		reverse_proxy 127.0.0.1:18080 {
+			flush_interval -1
 			header_up Host {http.request.host}
 			header_up X-Forwarded-Proto https
 			header_up X-Forwarded-Port 443
@@ -148,9 +162,10 @@ cat <<EOF
 EOF
 } > /etc/caddy/Caddyfile
 
-echo "Generated Caddyfile (CF protection: $([ "$CF_ENABLED" -eq 1 ] && echo "enabled" || echo "disabled")):" >&2
+echo "Generated Caddyfile (CF protection: $([ "$CF_ENABLED" -eq 1 ] && echo enabled || echo disabled)):" >&2
 cat /etc/caddy/Caddyfile >&2
 
+# ---------------------------------------------------------------- процессы
 /usr/local/bin/rathole --server /tmp/server.toml &
 RATHOLE_PID=$!
 
@@ -169,11 +184,9 @@ cleanup() {
     kill "$RATHOLE_PID" "$CADDY_PID" 2>/dev/null || true
     wait || true
 }
-
 trap cleanup INT TERM
 
-while kill -0 "$RATHOLE_PID" 2>/dev/null &&
-      kill -0 "$CADDY_PID" 2>/dev/null; do
+while kill -0 "$RATHOLE_PID" 2>/dev/null && kill -0 "$CADDY_PID" 2>/dev/null; do
     sleep 2
 done
 
