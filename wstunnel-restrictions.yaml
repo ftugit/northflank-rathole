@@ -1,0 +1,12 @@
+# Forward TCP to HTTPS port only. No reverse tunnels, UDP or other ports.
+# This permits *any* hostname/IP on port 443, including private destinations.
+restrictions:
+  - name: https-egress
+    match:
+      - !PathPrefix '^vyce-egress$'
+    allow:
+      - !Tunnel
+        protocol:
+          - Tcp
+        port:
+          - 443

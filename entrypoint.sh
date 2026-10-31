@@ -232,8 +232,7 @@ fi
 WSTUNNEL_PID=""
 if [ "$EGRESS_ENABLED" -eq 1 ]; then
     /usr/local/bin/wstunnel server --log-lvl WARN \
-        --restrict-http-upgrade-path-prefix vyce-egress \
-        --restrict-to vyceai.com:443 \
+        --restrict-config /etc/wstunnel/restrictions.yaml \
         ws://127.0.0.1:18081 &
     WSTUNNEL_PID=$!
 fi

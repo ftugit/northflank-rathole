@@ -28,6 +28,7 @@ COPY --from=rathole /app/rathole /usr/local/bin/rathole
 COPY --from=caddy /usr/bin/caddy /usr/bin/caddy
 COPY --from=wstunnel-download /tmp/wstunnel /usr/local/bin/wstunnel
 
+COPY wstunnel-restrictions.yaml /etc/wstunnel/restrictions.yaml
 COPY entrypoint.sh /entrypoint.sh
 
 RUN chmod 0755 /entrypoint.sh \
