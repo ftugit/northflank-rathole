@@ -1,5 +1,6 @@
 #!/bin/sh
 set -eu
+umask 077
 
 : "${RATHOLE_TOKEN:?RATHOLE_TOKEN is required}"
 
@@ -42,6 +43,25 @@ if [ -n "${CF_ORIGIN_SECRET:-}" ]; then
     CF_ENABLED=1
 else
     echo "CF_ORIGIN_SECRET not set — origin protection DISABLED (open access)" >&2
+fi
+
+# Optional egress tunnel. Disabled unless a sufficiently strong secret exists.
+# Use the existing rathole hostname and a fixed, non-secret path; authentication
+# is a header, not a URL (URLs are commonly logged by ingress/CDN).
+EGRESS_ENABLED=0
+if [ -n "${EGRESS_SECRET:-}" ]; then
+    if [ "${#EGRESS_SECRET}" -lt 64 ]; then
+        echo "EGRESS_SECRET must contain at least 64 alphanumeric characters" >&2
+        exit 1
+    fi
+    case "$EGRESS_SECRET" in
+      *[!A-Za-z0-9]*|'') echo "EGRESS_SECRET must be alphanumeric" >&2; exit 1;;
+    esac
+    EGRESS_PUBLIC_HOST="${EGRESS_PUBLIC_HOST:-$RATHOLE_PUBLIC_HOST}"
+    case "$EGRESS_PUBLIC_HOST" in
+      *[!A-Za-z0-9.-]*|'') echo "EGRESS_PUBLIC_HOST contains invalid characters" >&2; exit 1;;
+    esac
+    EGRESS_ENABLED=1
 fi
 
 # ---------------------------------------------------------------- rathole
@@ -99,6 +119,7 @@ cat <<EOF
 		format filter {
 			wrap json
 			request>headers>X-Origin-Auth delete
+			request>headers>X-Egress-Auth delete
 			request>headers>Cookie delete
 		}
 	}
@@ -107,6 +128,37 @@ cat <<EOF
 		respond "ok" 200
 	}
 
+EOF
+
+if [ "$EGRESS_ENABLED" -eq 1 ]; then
+cat <<EOF
+	# Egress is matched before the broad rathole WebSocket handler.
+	@egress_allowed {
+		host $EGRESS_PUBLIC_HOST
+		path /vyce-egress/*
+		header Upgrade websocket
+		header X-Egress-Auth $EGRESS_SECRET
+	}
+	handle @egress_allowed {
+		reverse_proxy 127.0.0.1:18081 {
+			header_up -X-Egress-Auth
+			flush_interval -1
+			transport http {
+				versions 1.1
+			}
+		}
+	}
+	@egress_denied {
+		host $EGRESS_PUBLIC_HOST
+		path /vyce-egress/*
+	}
+	handle @egress_denied {
+		respond "forbidden" 403
+	}
+EOF
+fi
+
+cat <<EOF
 	# 1) control + data каналы rathole (WebSocket upgrade)
 	@rathole_control {
 		host $RATHOLE_PUBLIC_HOST
@@ -162,8 +214,8 @@ cat <<EOF
 EOF
 } > /etc/caddy/Caddyfile
 
-echo "Generated Caddyfile (CF protection: $([ "$CF_ENABLED" -eq 1 ] && echo enabled || echo disabled)):" >&2
-cat /etc/caddy/Caddyfile >&2
+# The generated Caddyfile contains secrets; never print it to logs.
+echo "Generated Caddyfile (CF protection: $([ "$CF_ENABLED" -eq 1 ] && echo enabled || echo disabled); egress: $([ "$EGRESS_ENABLED" -eq 1 ] && echo enabled || echo disabled))" >&2
 
 # ---------------------------------------------------------------- процессы
 /usr/local/bin/rathole --server /tmp/server.toml &
@@ -177,17 +229,32 @@ if ! kill -0 "$RATHOLE_PID" 2>/dev/null; then
     exit 1
 fi
 
+WSTUNNEL_PID=""
+if [ "$EGRESS_ENABLED" -eq 1 ]; then
+    /usr/local/bin/wstunnel server --log-lvl WARN \
+        --restrict-http-upgrade-path-prefix vyce-egress \
+        --restrict-to vyceai.com:443 \
+        ws://127.0.0.1:18081 &
+    WSTUNNEL_PID=$!
+fi
+
 caddy run --config /etc/caddy/Caddyfile --adapter caddyfile &
 CADDY_PID=$!
 
 cleanup() {
-    kill "$RATHOLE_PID" "$CADDY_PID" 2>/dev/null || true
+    kill "$RATHOLE_PID" "$CADDY_PID" ${WSTUNNEL_PID:+"$WSTUNNEL_PID"} 2>/dev/null || true
     wait || true
 }
 trap cleanup INT TERM
 
 while kill -0 "$RATHOLE_PID" 2>/dev/null && kill -0 "$CADDY_PID" 2>/dev/null; do
+    if [ -n "$WSTUNNEL_PID" ] && ! kill -0 "$WSTUNNEL_PID" 2>/dev/null; then
+        echo "egress tunnel exited; shutting down" >&2
+        cleanup
+        exit 1
+    fi
     sleep 2
 done
+cleanup
 
 exit 1
