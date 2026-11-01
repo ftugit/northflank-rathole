@@ -114,8 +114,12 @@ cat <<EOF
 :8080 {
 	bind 0.0.0.0
 
+	# Only WARN/ERROR reach stdout. Per-request access entries are 99% of the
+	# server log volume and push useful rathole/wstunnel lines out of the
+	# 10k-line window Northflank keeps, so they are dropped here.
 	log {
 		output stdout
+		level WARN
 		format filter {
 			wrap json
 			request>headers>X-Origin-Auth delete
